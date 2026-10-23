@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+from modules.code_generator import generate_analysis_code
 from modules.analysis_engine import answer_question
 from modules.anomaly_detection import detect_anomalies
 from modules.conversation import resolve_follow_up
@@ -57,20 +58,20 @@ if uploaded_files:
 
             # Display data preview.
             st.subheader("Data Preview")
-            st.dataframe(df.head(100), use_container_width=True)
+            st.dataframe(df.head(100), width="stretch")
 
             # Display column information.
             with st.expander("Column Information"):
                 st.dataframe(
                     quality["column_info"],
-                    use_container_width=True,
+                    width="stretch",
                 )
 
             # Display missing values report.
             with st.expander("Missing Values Report"):
                 st.dataframe(
                     quality["missing_values"],
-                    use_container_width=True,
+                    width="stretch",
                 )
 
             # Interactive data visualization.
@@ -139,7 +140,7 @@ if uploaded_files:
                                 title=f"{y_column} vs {x_column}",
                                 hover_data=[x_column, y_column],
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
 
             elif chart_type == "Pie Chart":
                 if not categorical_columns:
@@ -180,7 +181,7 @@ if uploaded_files:
                                 values=value_column,
                                 title=f"{value_column} by {label_column}",
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
 
             else:
                 x_options = (
@@ -225,7 +226,7 @@ if uploaded_files:
                             y=y_column,
                             title=f"{y_column} by {x_column}",
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     else:
                         # Sort the X-axis when its values are valid dates.
                         parsed_dates = pd.to_datetime(
@@ -245,7 +246,7 @@ if uploaded_files:
                             title=f"{y_column} by {x_column}",
                             markers=True,
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
 
             # Detect unusual values in numeric columns.
             st.subheader("Anomaly Detection")
@@ -255,7 +256,7 @@ if uploaded_files:
                 st.success("No anomalies detected in numeric columns.")
             else:
                 st.warning(f"Detected {len(anomalies)} potential anomalies.")
-                st.dataframe(anomalies, use_container_width=True)
+                st.dataframe(anomalies, width="stretch")
 
             # Ask questions about the dataset and maintain session context.
             st.subheader("Ask Your Data")
@@ -300,6 +301,12 @@ if uploaded_files:
                         question=question_to_analyze,
                     )
 
+                    # Generate corresponding Pandas and SQL code.
+                    code_result = generate_analysis_code(
+                        df=analysis_df,
+                        question=question_to_analyze,
+                    )
+
                     # Add this exchange to the conversation history.
                     st.session_state[history_key].append({
                         "role": "user",
@@ -310,6 +317,7 @@ if uploaded_files:
                         "answer": answer,
                         "context_note": context_note,
                         "explanation": explanation,
+                         "generated_code": code_result,
                     })
 
                     # Keep the original analytical question when a follow-up
@@ -345,6 +353,30 @@ if uploaded_files:
                                 else:
                                     st.markdown(line)
 
+                                                # Display generated Pandas and SQL code.
+                        code_result = message.get("generated_code", {})
+
+                        with st.expander("View Generated Pandas and SQL Code"):
+                            if code_result.get("supported") == "true":
+                                st.markdown("#### Pandas Code")
+                                st.code(
+                                    code_result["pandas_code"],
+                                    language="python",
+                                )
+
+                                st.markdown("#### SQL Query")
+                                st.code(
+                                    code_result["sql_code"],
+                                    language="sql",
+                                )
+
+                            else:
+                                st.info(
+                                    code_result.get(
+                                        "message",
+                                        "Code generation is unavailable for this question.",
+                                    )
+                                )
         except (
             pd.errors.ParserError,
             UnicodeDecodeError,

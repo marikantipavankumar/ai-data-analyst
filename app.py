@@ -4,6 +4,7 @@ import plotly.express as px
 
 from modules.analysis_engine import answer_question
 from modules.anomaly_detection import detect_anomalies
+from modules.conversation import resolve_follow_up
 from modules.data_quality import analyze_data_quality
 from modules.explanation import explain_analysis
 
@@ -110,7 +111,9 @@ if uploaded_files:
                         )
 
                     available_y_columns = [
-                        column for column in numeric_columns if column != x_column
+                        column
+                        for column in numeric_columns
+                        if column != x_column
                     ]
 
                     with col2:
@@ -254,37 +257,93 @@ if uploaded_files:
                 st.warning(f"Detected {len(anomalies)} potential anomalies.")
                 st.dataframe(anomalies, use_container_width=True)
 
-            # Ask questions about the dataset.
+            # Ask questions about the dataset and maintain session context.
             st.subheader("Ask Your Data")
+
+            # Include file name in the keys so each uploaded dataset has
+            # a separate conversation during this Streamlit session.
+            history_key = f"chat_history_{uploaded_file.name}"
+            context_key = f"context_question_{uploaded_file.name}"
+
+            if history_key not in st.session_state:
+                st.session_state[history_key] = []
+
             question = st.text_input(
                 "Enter your question",
                 placeholder="e.g. What is the total revenue?",
                 key=f"question_{uploaded_file.name}",
             )
 
-            if st.button("Analyze", key=f"analyze_{uploaded_file.name}"):
+            if st.button(
+                "Analyze",
+                key=f"analyze_{uploaded_file.name}",
+            ):
                 if question.strip():
-                    answer = answer_question(df, question)
+                    previous_context = st.session_state.get(context_key)
 
-                    st.markdown("### Analysis Result")
-                    st.text(answer)
-
-                    # Explain the analysis result.
-                    with st.expander("How was this answer calculated?"):
-                        explanation = explain_analysis(
+                    # Resolve follow-up questions using prior context.
+                    analysis_df, question_to_analyze, context_note = (
+                        resolve_follow_up(
                             df=df,
                             question=question,
+                            previous_question=previous_context,
                         )
+                    )
 
-                        for line in explanation.splitlines():
-                            label, separator, detail = line.partition(": ")
+                    # Generate the answer and its explanation.
+                    answer = answer_question(
+                        analysis_df,
+                        question_to_analyze,
+                    )
+                    explanation = explain_analysis(
+                        df=analysis_df,
+                        question=question_to_analyze,
+                    )
 
-                            if separator:
-                                st.markdown(f"**{label}:** {detail}")
-                            else:
-                                st.markdown(line)
+                    # Add this exchange to the conversation history.
+                    st.session_state[history_key].append({
+                        "role": "user",
+                        "content": question,
+                    })
+                    st.session_state[history_key].append({
+                        "role": "assistant",
+                        "answer": answer,
+                        "context_note": context_note,
+                        "explanation": explanation,
+                    })
+
+                    # Keep the original analytical question when a follow-up
+                    # only changes the selected category (for example, East
+                    # followed by West).
+                    if (
+                        context_note
+                        and question_to_analyze == previous_context
+                    ):
+                        st.session_state[context_key] = previous_context
+                    else:
+                        st.session_state[context_key] = question_to_analyze
                 else:
                     st.warning("Please enter a question first.")
+
+            # Redisplay the conversation after every Streamlit rerun.
+            for message in st.session_state[history_key]:
+                with st.chat_message(message["role"]):
+                    if message["role"] == "user":
+                        st.write(message["content"])
+                    else:
+                        if message.get("context_note"):
+                            st.caption(message["context_note"])
+
+                        st.markdown("### Analysis Result")
+                        st.text(message["answer"])
+
+                        with st.expander("How was this answer calculated?"):
+                            for line in message["explanation"].splitlines():
+                                label, separator, detail = line.partition(": ")
+                                if separator:
+                                    st.markdown(f"**{label}:** {detail}")
+                                else:
+                                    st.markdown(line)
 
         except (
             pd.errors.ParserError,
